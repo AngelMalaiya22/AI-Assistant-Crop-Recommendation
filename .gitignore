@@ -3,3 +3,4 @@ shap_outputs/
 __pycache__/
 *.ipynb
 *.csv
+anaconda_projects/
