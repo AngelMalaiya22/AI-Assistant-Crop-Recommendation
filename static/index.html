@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Crop Recommendation</title>
+<style>
+  :root { --bg:#f4f7f2; --card:#fff; --ink:#1d2b1f; --muted:#667; --green:#2e7d32; --red:#c62828; --line:#dde5da; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--green); color:#fff; padding:28px 20px; text-align:center; }
+  header h1 { margin:0 0 6px; font-size:1.7rem; }
+  header p { margin:0; opacity:.9; }
+  main { max-width:900px; margin:24px auto; padding:0 16px; display:grid; gap:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:22px; }
+  h2 { margin:0 0 14px; font-size:1.15rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; }
+  label { display:block; font-size:.85rem; color:var(--muted); margin-bottom:4px; }
+  input, select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; font-size:.95rem; background:#fff; }
+  button { margin-top:18px; width:100%; padding:12px; border:0; border-radius:8px; background:var(--green); color:#fff; font-size:1rem; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .hidden { display:none; }
+  .row { display:flex; align-items:center; gap:10px; margin:8px 0; font-size:.92rem; }
+  .row .name { width:170px; flex:none; }
+  .bar { flex:1; background:#eef2ec; border-radius:6px; height:18px; position:relative; overflow:hidden; }
+  .fill { height:100%; background:var(--green); }
+  .row .val { width:56px; text-align:right; flex:none; color:var(--muted); }
+  .shap .bar { background:#f3f3f3; }
+  .shap .mid { position:absolute; left:50%; top:0; bottom:0; width:1px; background:#999; }
+  .shap .seg { position:absolute; top:0; bottom:0; }
+  .pos { background:var(--green); } .neg { background:var(--red); }
+  .note { font-size:.85rem; color:var(--muted); margin:8px 0 0; }
+  .warn { background:#fff6e0; border:1px solid #f1d28a; border-radius:8px; padding:8px 12px; font-size:.85rem; margin-bottom:12px; }
+  .top { text-transform:capitalize; font-size:1.5rem; font-weight:700; color:var(--green); margin:0 0 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Smart Crop Recommendation</h1>
+  <p>Enter your field conditions. The model suggests crops and explains why using SHAP.</p>
+</header>
+<main>
+  <section class="card">
+    <h2>Field conditions</h2>
+    <div class="grid" id="form"></div>
+    <button id="go">Recommend crop</button>
+    <p class="note" id="err" style="color:#c62828"></p>
+  </section>
+  <section class="card hidden" id="result">
+    <div id="warns"></div>
+    <h2>Recommended crop</h2>
+    <p class="top" id="best"></p>
+    <h2 style="margin-top:24px">Why this crop?</h2>
+    <div class="shap" id="shap"></div>
+    <p class="note"><span style="color:var(--green)">Green</span> bars push the probability of this crop up, <span style="color:var(--red)">red</span> bars push it down. Soil, crop type and season are shown as one bar each.</p>
+  </section>
+</main>
+<script>
+const LABELS = { SOIL_PH:"Soil pH", TEMP:"Temperature (°C)", RELATIVE_HUMIDITY:"Relative humidity (%)",
+  N:"Nitrogen (N)", P:"Phosphorus (P)", K:"Potassium (K)",
+  TYPE_OF_CROP:"Type of crop", SOIL:"Soil type", SEASON:"Season" };
+const $ = id => document.getElementById(id);
+let NUMERIC = [], CATS = [];
+
+function field(key, inner) {
+  return `<div><label for="${key}">${LABELS[key] || key}</label>${inner}</div>`;
+}
+
+async function init() {
+  const meta = await (await fetch("/api/meta")).json();
+  NUMERIC = Object.keys(meta.numeric);
+  CATS = Object.keys(meta.options);
+  let html = CATS.map(k => field(k,
+    `<select id="${k}">${meta.options[k].map(o => `<option value="${o.replace(/"/g,'&quot;')}">${o.trim()}</option>`).join("")}</select>`)).join("");
+  html += NUMERIC.map(k => {
+    const r = meta.numeric[k];
+    return field(k, `<input id="${k}" type="number" step="any" min="${r.min}" max="${r.max}" value="${r.median.toFixed(1)}">`);
+  }).join("");
+  $("form").innerHTML = html;
+}
+
+function bars(items, cls) { return items.join(""); }
+
+$("go").onclick = async () => {
+  $("err").textContent = "";
+  $("go").disabled = true;
+  const payload = {};
+  [...NUMERIC, ...CATS].forEach(k => payload[k] = $(k).value);
+  try {
+    const res = await fetch("/api/predict", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || "Request failed");
+    show(d);
+  } catch (e) { $("err").textContent = e.message; }
+  $("go").disabled = false;
+};
+
+function show(d) {
+  $("result").classList.remove("hidden");
+  $("warns").innerHTML = d.warnings.map(w => `<div class="warn">${w}</div>`).join("");
+  $("best").textContent = d.predictions[0].crop;
+  const rows = d.explanation.contributions;
+  const max = Math.max(...rows.map(r => Math.abs(r.shap))) || 1;
+  $("shap").innerHTML = rows.map(r => {
+    const w = Math.abs(r.shap) / max * 50;
+    const seg = r.shap >= 0 ? `left:50%;width:${w}%` : `left:${50 - w}%;width:${w}%`;
+    return `<div class="row"><span class="name">${LABELS[r.feature] || r.feature}<br><small style="color:#889">${String(r.input).trim()}</small></span>
+      <div class="bar"><div class="mid"></div><div class="seg ${r.shap >= 0 ? "pos" : "neg"}" style="${seg}"></div></div>
+      <span class="val">${r.shap >= 0 ? "+" : ""}${r.shap.toFixed(3)}</span></div>`;
+  }).join("");
+  $("result").scrollIntoView({ behavior:"smooth" });
+}
+init();
+</script>
+</body>
+</html>
