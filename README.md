@@ -4,7 +4,7 @@ A machine-learning web app that recommends the most suitable crop for a field ba
 
 This is **Module 1** of my major project, the **AI Smart Farming Assistant**.
 
-🔗 **Live demo:** _add your Render link here_
+🔗 **Live demo:**[ _add your Render link here_](https://ai-assistant-crop-recommendation.onrender.com/)
 
 ---
 
